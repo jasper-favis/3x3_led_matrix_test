@@ -19,19 +19,19 @@
 
 #define CHANNEL_COUNT  16
 #define LED_BRIGHTNESS_RESOLUTION 2048 
-#define MULTIPLEX_FREQ 1000            // hz
-#define PRESCALER      256             // 16 Mhz / 156
+#define MULTIPLEX_FREQ 1000 // hz
+#define PRESCALER      256  // (clk / 156)
 #define SHIFT8  4
 #define SHIFT9  3
 #define SHIFT10 2
 #define SHIFT11 1
 
 uint16_t pwms[CHANNEL_COUNT];
-uint16_t rgb[] = {2047,0,0};
+uint16_t rgb[] = {2047,0,0}; // red: fully on, green: off, blue: off
 uint16_t count = 0;
-uint8_t dec = 0;
+uint8_t dec = 0; // dec and inc point to the current color pair in rgb[]
 uint8_t inc = 1;
-uint8_t row = 0;
+uint8_t row = 0; // address input for SN74LS138
 bool interruptTriggered = false;
 
 PCA9685 pwmController;
@@ -88,16 +88,16 @@ void loop() {
     }
 }
 
-/*   Prescaler select bits for Timer0
-     CS02 | CSO1 | CS00 | Description
-       0     0     0     No clock source (Timer/Counter Stopped)
-       0     0     1     No prescaling
-       0     1     0     clk / 8
-       0     1     1     clk / 64
-       1     0     0     clk / 256
-       1     0     1     clk / 1024
-       1     1     0     Ext clk pin T0 (Falling Edge)
-       1     1     1     Ext clk pin T0 (Rising Edge)
+/*  Prescaler select bits for Timer0
+    CS02 | CSO1 | CS00 | Description
+    0     0     0     No clock source (Timer/Counter Stopped)
+    0     0     1     No prescaling
+    0     1     0     clk / 8
+    0     1     1     clk / 64
+    1     0     0     clk / 256
+    1     0     1     clk / 1024
+    1     1     0     Ext clk pin T0 (Falling Edge)
+    1     1     1     Ext clk pin T0 (Rising Edge)
 */
 void timer0Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TCCR0A  = 0;                                         // set entire TCCR0A register to 0
@@ -109,16 +109,16 @@ void timer0Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TIMSK0 |= (1 << OCIE0A);                             // enable timer compare interrupt
 }
 
-/*   Prescaler select bits for Timer1
-     CS12 | CS11 | CS10 | Description
-       0     0     0     No clock source (Timer/Counter Stopped)
-       0     0     1     No prescaling
-       0     1     0     clk / 8
-       0     1     1     clk / 64
-       1     0     0     clk / 256
-       1     0     1     clk / 1024
-       1     1     0     Ext clk pin T1 (Falling Edge)
-       1     1     1     Ext clk pin T1 (Rising Edge)
+/*  Prescaler select bits for Timer1
+    CS12 | CS11 | CS10 | Description
+    0     0     0     No clock source (Timer/Counter Stopped)
+    0     0     1     No prescaling
+    0     1     0     clk / 8
+    0     1     1     clk / 64
+    1     0     0     clk / 256
+    1     0     1     clk / 1024
+    1     1     0     Ext clk pin T1 (Falling Edge)
+    1     1     1     Ext clk pin T1 (Rising Edge)
 */
 void timer1Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TCCR1A  = 0;                                         // set entire TCCR1A register to 0
@@ -130,13 +130,13 @@ void timer1Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TIMSK1 |= (1 << OCIE1A);                             // enable timer compare interrupt
 }
 
-/*   Prescaler select bits for Timer2 
-     CS22 | CS21 | CS20 | Description
-       0     0     0     No clock source (Timer/Counter Stopped)
-       0     0     1     No prescaling
-       0     1     0     clk / 8
-       0     1     1     clk / 32
-       1     0     0     clk / 64
+/*  Prescaler select bits for Timer2 
+    CS22 | CS21 | CS20 | Description
+    0     0     0     No clock source (Timer/Counter Stopped)
+    0     0     1     No prescaling
+    0     1     0     clk / 8
+    0     1     1     clk / 32
+    1     0     0     clk / 64
 */
 void timer2Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TCCR2A  = 0;                                         // set entire TCCR2A register to 0
@@ -148,15 +148,20 @@ void timer2Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TIMSK2 |= (1 << OCIE2A);                             // enable timer compare interrupt
 }
 
-/* Interrupt based on given multiplexing frequency. */
+/* Interrupt service routine sets flag which is handled in the main loop. */
 ISR(TIMER0_COMPA_vect) {
     interruptTriggered = true;
 }
 
+/* Pins 2, 3, and 4 set the 3-bit address. */
 void turnOnRow(uint8_t rowAddr) {
     PORTD = rowAddr << PD2;
 }
 
+/*  The PWM values are set according to the following arrangement:
+    Channel: 0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
+    Cathode: r  g  b  r  g  b  r  g  b  r  g  b  r  g  b  r
+ */
 void setChannelsRGB(uint16_t r, uint16_t g, uint16_t b, uint16_t pwms[]) {
     for(int i = 0; i < CHANNEL_COUNT; i++){
         if(i % 3 == 0) {
