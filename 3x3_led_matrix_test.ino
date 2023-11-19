@@ -19,19 +19,22 @@
 
 #define CHANNEL_COUNT  16
 #define LED_BRIGHTNESS_RESOLUTION 2048 
-#define MULTIPLEX_FREQ 1000 // hz
-#define PRESCALER      256  // (clk / 156)
+#define MULTIPLEX_FREQ 2000 // hz
+#define PRESCALER      64   // (clk / 64)
 #define SHIFT8  4
 #define SHIFT9  3
 #define SHIFT10 2
 #define SHIFT11 1
 
 uint16_t pwms[CHANNEL_COUNT];
-uint16_t rgb[] = {2047,0,0}; // red: fully on, green: off, blue: off
-uint16_t count = 0;
-uint8_t dec = 0; // dec and inc point to the current color pair in rgb[]
+uint16_t rgb[] = {2047,0,0};      // red: fully on, green: off, blue: off
+uint16_t brightnessCount = 0;
+uint16_t multiplexSpeed  = 1023;  // 10-bit ADC max value = 2000hz = 0.5ms
+uint16_t multiplexSpeedCount = 0;
+uint8_t dec = 0;                  // dec and inc point to the current color pair in rgb[]
 uint8_t inc = 1;
-uint8_t row = 0; // address input for SN74LS138
+uint8_t row = 0;                  // Address input for SN74LS138
+uint8_t pwmControllerToggle = 1;  // Toggles on interrupt. 1->0->1 every millisecond.
 bool interruptTriggered = false;
 
 PCA9685 pwmController;
@@ -57,6 +60,8 @@ void setup() {
     cli();  // disable interrupts
     timer0Setup(MULTIPLEX_FREQ, PRESCALER); // (important!) You also need to hardcode prescaler value inside timerXSetup.
     sei();  // enable interrupts
+
+    turnOnRow(row);
 }
 
 void loop() {
@@ -64,27 +69,35 @@ void loop() {
         interruptTriggered = false;
 
         /* This is where we multiplex the rows. */
-        turnOnRow(row);
-        row = (row + 1) % 3;
-
-        /* Crossfade LED pair */
-        rgb[dec] -= 1;
-        rgb[inc] += 1;
-        count++;
-
-        /* Convert 11-bit to 12-bit color values (0-2047 --> 0-4095).
-           Then set channels to rgb values. */
-        uint16_t r = rgb[0] << SHIFT11;
-        uint16_t g = rgb[1] << SHIFT11;
-        uint16_t b = rgb[2] << SHIFT11;
-        setChannelsRGB(r,g,b,pwms);
-
-        /* Move to the next LED pair when crossfade is complete. */
-        if(count >= LED_BRIGHTNESS_RESOLUTION) {
-            inc = (inc + 1) % 3;
-            dec = (dec + 1) % 3;
-            count = 0;
+        if(multiplexSpeedCount >= multiplexSpeed) {
+            multiplexSpeedCount = 0;
+            row = (row + 1) % 3;
+            turnOnRow(row);
         }
+
+        if(pwmControllerToggle) {
+            speed = analogRead(A0);
+
+            /* Crossfade LED pair */
+            rgb[dec] -= 1;
+            rgb[inc] += 1;
+            brightnessCount++;
+
+            /* Convert 11-bit to 12-bit color values (0-2047 --> 0-4095).
+              Then set channels to rgb values. */
+            uint16_t r = rgb[0] << SHIFT11;
+            uint16_t g = rgb[1] << SHIFT11;
+            uint16_t b = rgb[2] << SHIFT11;
+            setChannelsRGB(r,g,b,pwms);
+
+            /* Move to the next LED pair when crossfade is complete. */
+            if(brightnessCount >= LED_BRIGHTNESS_RESOLUTION) {
+                inc = (inc + 1) % 3;
+                dec = (dec + 1) % 3;
+                brightnessCount = 0;
+            }
+        }
+        
     }
 }
 
@@ -105,7 +118,7 @@ void timer0Setup(uint32_t interruptFreq, uint32_t prescaler) {
     TCNT0   = 0;                                         // initialize counter value to 0
     OCR0A   = (16*10^6) / (interruptFreq*prescaler) - 1; // set compare match register. (important!: must be <256 for 8-bt Timer0)
     TCCR0A |= (1 << WGM01);                              // turn on CTC mode
-    TCCR0B |= (1 << CS02);                               // 256 prescaler
+    TCCR0B |= (1 << CS01) | (1 << CS00);                 // 64 prescaler
     TIMSK0 |= (1 << OCIE0A);                             // enable timer compare interrupt
 }
 
@@ -151,6 +164,11 @@ void timer2Setup(uint32_t interruptFreq, uint32_t prescaler) {
 /* Interrupt service routine sets flag which is handled in the main loop. */
 ISR(TIMER0_COMPA_vect) {
     interruptTriggered = true;
+    pwmControllerToggle ^= 1;
+
+    if(multiplexSpeedCount < multiplexSpeed) {
+      multiplexSpeedCount++;
+    }    
 }
 
 /* Pins 2, 3, and 4 set the 3-bit address. */
